@@ -1,30 +1,24 @@
 import base64
 import hashlib
+
 import mysql.connector
 from Crypto import Random
 from Crypto.Cipher import AES
 
-# sudo mysql -p
 
-# hardcoded_pw = "lolo" #for now
-# _key =  hardcoded_pw + ((16-len(hardcoded_pw)) * '=')
-# BS = 16
-# ctrl shift - collapse all
-# ctrl alt left restore last position
-# alt shift l reformat
 DB_NAME = "pm"
 TABLES = {
-    "User": "CREATE TABLE User (id MEDIUMINT NOT NULL AUTO_INCREMENT, username VARCHAR(1000) NOT NULL UNIQUE, master_password VARCHAR(50) NOT NULL, PRIMARY KEY (id))", \
+    "User": "CREATE TABLE Users (id MEDIUMINT NOT NULL AUTO_INCREMENT, username VARCHAR(1000) NOT NULL UNIQUE, master_password VARCHAR(50) NOT NULL, PRIMARY KEY (id))", \
     "Data": "CREATE TABLE Passwords (id MEDIUMINT NOT NULL AUTO_INCREMENT, user_id MEDIUMINT, username VARCHAR(1000) NOT NULL, password VARCHAR(1000) NOT NULL, url VARCHAR(1000) NOT NULL ,PRIMARY KEY (id) )"
 }
 
 
 class User:
 
-    def __init__(self, username, master_key):
+    def __init__(self, username, master_key,id):
         self.username = username
+        self.id = id
         self.master_key = master_key
-
 
 
 class PasswordManager():
@@ -41,11 +35,11 @@ class PasswordManager():
         self.cursor = connection.cursor()
         self.current_user = None
 
+
         try:
             self.cursor.execute(f"USE {DB_NAME}")
 
         except mysql.connector.Error as err:
-            print(f"Database {DB_NAME} does not exists.")
 
             try:
                 self.create_database()
@@ -71,15 +65,18 @@ class PasswordManager():
 
         username = input("Username: ")
         master_key = input("Master Key: ")
-        master_key = hashlib.md5(master_key.encode()).hexdigest()
-        sql = f"INSERT INTO User (username,master_password) VALUES ('{username}' , '{master_key}')"
+        self.key = hashlib.md5(master_key.encode()).hexdigest()
+        sql = f"INSERT INTO Users (username,master_password) VALUES ('{username}' , '{self.key}')"
 
+        get_user_id = f"select * from Users where username='{username}'"
         try:
             self.cursor.execute(sql)
             self.connection.commit()
-            cur_user = User(username, master_key)
+            self.cursor.execute(get_user_id)
+            user_id = self.cursor.fetchone()[0]  # returns row
+            print("userid is : " + str(user_id))
+            cur_user = User(username, self.key , user_id)
             self.current_user = cur_user
-
             print("User Created Successfully")
 
         except mysql.connector.Error as err:
@@ -90,16 +87,20 @@ class PasswordManager():
         username = input("Username: ")
         master_key = input("Master Key: ")
         md5_of_master_pw = hashlib.md5(master_key.encode()).hexdigest()
-
-        sql = f"SELECT * FROM User WHERE master_password = '{md5_of_master_pw}' AND username='{username}'"
+        self.key = md5_of_master_pw
+        sql = f"SELECT * FROM Users WHERE master_password = '{md5_of_master_pw}' AND username='{username}'"
+        get_user_id = f"select * from Users where username='{username}'"
         try:
             self.cursor.execute(sql)
             user_exists = self.cursor.fetchall()  # returns array of tuples
 
             if len(user_exists) == 1:
-                cur_user = User(username, master_key)
-                self.current_user = cur_user
 
+                self.cursor.execute(get_user_id)
+                user_id = self.cursor.fetchone()[0]  # returns a tuple , we only need the 1st element
+
+                cur_user = User(username, self.key , user_id)
+                self.current_user = cur_user
                 print("Successful login")
             else:
                 print("Incorrect Username or Password")
@@ -107,67 +108,105 @@ class PasswordManager():
         except mysql.connector.Error as err:
             print("Can't sign in")
 
-    def is_url_present(self,url):
+    def is_url_present(self, url):
         sql = f"SELECT * FROM Passwords WHERE url='{url}'"
-        self.cursor.execute(sql)
-        # gets the number of rows affected by the command executed
-        entry = self.cursor.fetchone()
-        return False if entry == None else True
+        try:
+            self.cursor.execute(sql)
 
-    def insert_row(self,username, pw, url):
+            # gets the number of rows affected by the command executed
+            entry = self.cursor.fetchone()
+            return False if entry == None else True
+        except mysql.connector.Error as err:
+            print("Unknown error")
+
+    def insert_row(self, username, pw, url):
         """Inserts the entry if it doesn't exist and edits the existing entry if it does. """
+        # TODO check for current  user only
         if self.is_url_present(url):
-            _update("username", username, url)
-            _update("password", pw, url)
+            self.update_row("username", username, url)
+            self.update_row("password", pw, url)
+
 
         else:
+            print(f"master key is: {self.current_user.master_key}")
+
             aes = AESCipher(self.current_user.master_key)
             encrypted_pw = aes.encrypt(pw)
-            sql = f"INSERT INTO Passwords (username, password ,url) VALUES ('{username}', '{encrypted_pw}' , '{url}')"
-
+            sql = f"INSERT INTO Passwords (user_id,username, password ,url) VALUES ('{self.current_user.id}','{username}', '{encrypted_pw}' , '{url}')"
+            # print(sql)
             self.cursor.execute(sql)
             self.connection.commit()
             print(self.cursor.rowcount, "was inserted.")
+    def delete_row(self, url):
+        sql = f"DELETE FROM Passwords WHERE url='{url}' AND user_id='{self.current_user.id}'"
+        self.cursor.execute(sql)
+        self.connection.commit()
+        print("Row deleted.")
 
-    def handle_insert(self):
-        username = input("Username: ")
-        password = input("Password: ")
-        url = input("Url: ")
-        self.insert_row(username,password,url)
+    def handle_input(self, choice):
+        if choice == "insert" or choice=="update":
+            username = input("Username: ")
+            password = input("Password: ")
+            url = input("Url: ")
 
+            if choice == "insert":
 
-    def _update(self,field, new_data, url):
+                self.insert_row(username, password, url)
+
+            else :
+
+                self.update_row("username", username, url)
+                self.update_row("password", password, url)
+
+        elif choice == "delete":
+            url = input("Url: ")
+            self.delete_row(url)
+
+    def update_row(self, field, new_data, url):
         if field == 'password':
             aes = AESCipher(self.current_user.master_key)
-            new_data = aes.encrypt(new_data)
+            new_data = aes.encrypt(new_data)  # new_Data here is pw
 
-        sql = "UPDATE Passwords SET {field} ='{new_data}' WHERE url='{url}'"
-
+        sql = f"UPDATE Passwords SET {field} ='{new_data}' WHERE url='{url}' AND user_id='{self.current_user.id}'"
 
         self.cursor.execute(sql)
         self.connection.commit()
         print(f"{field} edited.")
 
-    def _delete(self,url):
-        sql = f"DELETE FROM PM WHERE url='{url}'"
+
+
+    def print_db(self):
+        sql = f"SELECT username, password, url FROM Passwords where user_id='{self.current_user.id}'"
         self.cursor.execute(sql)
-        self.connection.commit()
-        print("Deleted.")
+        print(" Username\t\tPassword\t\t\t\tUrl\t\t")
+
+        for (username, password, url) in self.cursor:
+            entry = f"| {username} | {password} | {url} |"
+            print(" " + "-" * (len(entry) - 2))
+            print(entry)
+
+            print(" " + "-" * (len(entry) - 2))
 
 
 class AESCipher:
-    def __init__(self, key):
-        self.key = pad(key)
-        self.BS = 16
 
-    def pad(self,raw):
-        return raw + (self.BS - len(raw) % self.BS) * chr(self.BS - len(raw) % self.BS)
+    def pad(self, raw):
+        padded = raw + (self.BS - len(raw) % self.BS) * chr(self.BS - len(raw) % self.BS)
+        print(f"[+] length of padded is {len(padded)}, type: {type(padded)}")
+        return padded
+
+    def __init__(self, key):
+        self.BS = 16
+        self.key = bytes(key, 'utf-8')
+        print(f"heres your self.key: {self.key}, len: {len(self.key)}")
 
     def encrypt(self, raw):
         raw = self.pad(raw)  # pad
         iv = Random.new().read(AES.block_size)
+        print(type(self.key))
+        print(type(iv))
         cipher = AES.new(self.key, AES.MODE_CBC, iv)
-        return base64.b64encode(iv + cipher.encrypt(raw))
+        return base64.b64encode(iv + cipher.encrypt(raw)).decode("utf-8")
 
     def decrypt(self, enc):
         enc = base64.b64decode(enc)
@@ -176,24 +215,6 @@ class AESCipher:
         decrypted = cipher.decrypt(enc[16:])
         decrypted = decrypted[:-ord(decrypted[len(decrypted) - 1:])]  # unpad
         return decrypted.decode("utf-8")
-
-
-def get_db():
-    sql = "SELECT username, password, url FROM PM"
-    self.cursor.execute(sql)
-    return self.cursor
-
-
-def print_db():
-    self.cursor = get_db()
-    print(" Username\t\tPassword\t\t\t\tUrl\t\t")
-    for (username, password, url) in self.cursor:
-        entry = f"| {username} | {password} | {url} |"
-        print(" " + "-" * (len(entry) - 2))
-        print(entry)
-
-    print(" " + "-" * (len(entry) - 2))
-
 
 
 def export_passwords():
@@ -233,66 +254,59 @@ def config(usr):
 
 def main_menu():
     print("Welcome to Password Manager.")
-    choice = int(input("1. Login \n2. Create New User\n>> "))
+    try:
+        choice = int(input("1. Login \n2. Create New User\n>> "))
+    except:
+        choice = -1
     return choice
 
 
-def user_interaction(current_user):
+def user_interaction(password_manager):
+    current_user = password_manager.current_user
     if not current_user:
         print("Error retrieving user information")
         return -1
     print(f"\t\tYou're logged in as {current_user.username}")
-    choice = int(input("1. Insert\n2. Update\n3.Delete\n>>>"))
+    password_manager.print_db()
+    try:
+        choice = int(input("1.Insert\n2.Update\n3.Delete\n>>> "))
+    except:
+        choice = -1
     return choice
 
 
 if __name__ == "__main__":
 
     password_manager = PasswordManager()
-    operations = {1: password_manager.insert_row,
-                  2: password_manager.update_row,
-                  3: password_manager.delete_row
+    operations = {1: "insert",
+                  2: "update",
+                  3: "delete"
                   }
     while True:
+        # MAIN MENU
         choice = main_menu()
-
         if choice == 1:
             password_manager.sign_in()
 
         elif choice == 2:
             password_manager.register()
+        else:
+            print("Invalid choice")
+            continue
 
+        #USER MENU
         if password_manager.current_user:
 
             while True:
-                choice = user_interaction(password_manager.current_user)
+                choice = user_interaction(password_manager)
                 if choice == -1: break
                 if choice in operations:
-                    operations[choice]()
+                    password_manager.handle_input( operations[choice])
 
                 else:
                     continue
 
-    # current_user = User(username,master_key) # create an instance of the User class
-    # if current_user.exists() :
-    #     print("yuppyyyy")
-    #     current_user.sign_in()
-
-    # else:
-    #     print("gonna sign you in baby")
-    #     current_user.register()
-    #     _insert("sara'susername" ,"sara'spw" , "sara'surl")
-
-    # self.cursor = current_user.connection.cursor()
-    # print_db()
-
-    # db = mysql.connector.connect(
-    # host="localhost",
-    # user="root",
-    # password="gbhgbhgbh",
-    # database="password_manager"
-    # )
-
 # register User
 # use master key
 # 3dli el interface shwya
+# function logout
