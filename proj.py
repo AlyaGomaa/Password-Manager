@@ -74,7 +74,7 @@ class PasswordManager():
             self.connection.commit()
             self.cursor.execute(get_user_id)
             user_id = self.cursor.fetchone()[0]  # returns row
-            print("userid is : " + str(user_id))
+
             cur_user = User(username, self.key , user_id)
             self.current_user = cur_user
             print("User Created Successfully")
@@ -128,29 +128,30 @@ class PasswordManager():
 
 
         else:
-            print(f"master key is: {self.current_user.master_key}")
 
             aes = AESCipher(self.current_user.master_key)
             encrypted_pw = aes.encrypt(pw)
             sql = f"INSERT INTO Passwords (user_id,username, password ,url) VALUES ('{self.current_user.id}','{username}', '{encrypted_pw}' , '{url}')"
-            # print(sql)
             self.cursor.execute(sql)
             self.connection.commit()
             print(self.cursor.rowcount, "was inserted.")
     def delete_row(self, url):
-        sql = f"DELETE FROM Passwords WHERE url='{url}' AND user_id='{self.current_user.id}'"
-        self.cursor.execute(sql)
-        self.connection.commit()
-        print("Row deleted.")
+        try:
+            sql = f"DELETE FROM Passwords WHERE url='{url}' AND user_id='{self.current_user.id}'"
+            self.cursor.execute(sql)
+            self.connection.commit()
+            print("Row deleted.")
+
+        except  mysql.connector.Error as err:
+            print(err)
+
 
     def handle_input(self, choice):
         if choice == "insert" or choice=="update":
             username = input("Username: ")
             password = input("Password: ")
             url = input("Url: ")
-
             if choice == "insert":
-
                 self.insert_row(username, password, url)
 
             else :
@@ -161,6 +162,11 @@ class PasswordManager():
         elif choice == "delete":
             url = input("Url: ")
             self.delete_row(url)
+        elif choice == "export":
+            self.export_passwords()
+        elif choice == "import":
+            filepath = input("Filepath:")
+            self.import_passwords(filepath)
 
     def update_row(self, field, new_data, url):
         if field == 'password':
@@ -173,38 +179,68 @@ class PasswordManager():
         self.connection.commit()
         print(f"{field} edited.")
 
+    def get_db(self):
+        sql = f"SELECT username, password, url FROM Passwords where user_id='{self.current_user.id}'"
+        self.cursor.execute(sql)
 
 
     def print_db(self):
-        sql = f"SELECT username, password, url FROM Passwords where user_id='{self.current_user.id}'"
-        self.cursor.execute(sql)
-        print(" Username\t\tPassword\t\t\t\tUrl\t\t")
+        self.get_db()
 
+        creds=[]
         for (username, password, url) in self.cursor:
-            entry = f"| {username} | {password} | {url} |"
-            print(" " + "-" * (len(entry) - 2))
-            print(entry)
+            creds.append((username,password,url))
 
-            print(" " + "-" * (len(entry) - 2))
+        if len(creds)>0:# the user previously inserted passwords
+            aes = AESCipher(self.key)
+            print(" Username\tPassword\tUrl")
+            for row in creds:
+                password = aes.decrypt(row[1])
+                entry = f"| {row[0]} | {password} | {row[2]} |"
+                print(" " + "-" * (len(entry) - 2))
+                print(entry)
+                print(" " + "-" * (len(entry) - 2))
+
+    def export_passwords(self):
+        f = open("passwords.csv", "w")
+        f.write('name,url,username,password\n')
+        self.get_db()
+        aes = AESCipher(self.key)
+        for (username, password, url) in self.cursor:
+            decrypted_password = aes.decrypt(password)
+            f.write(f"{url},{username},{decrypted_password}\n")
+        f.close()
+        print("Passwords exported to passwords.csv in current directory.")
+
+    def import_passwords(self,filepath):
+        f = open(filepath, 'r')
+        credentials = f.read()
+
+        for line in credentials.splitlines()[1:]:  # we don't need the first line of a csv file it's always url , username , password
+            url, username, password = line.split(',')
+            self.insert_row(username, password, url)
+
+        f.close()
+        print("Passwords successfully imported.")
+        self.print_db()
 
 
 class AESCipher:
 
     def pad(self, raw):
         padded = raw + (self.BS - len(raw) % self.BS) * chr(self.BS - len(raw) % self.BS)
-        print(f"[+] length of padded is {len(padded)}, type: {type(padded)}")
+
         return padded
 
     def __init__(self, key):
         self.BS = 16
         self.key = bytes(key, 'utf-8')
-        print(f"heres your self.key: {self.key}, len: {len(self.key)}")
+
 
     def encrypt(self, raw):
         raw = self.pad(raw)  # pad
         iv = Random.new().read(AES.block_size)
-        print(type(self.key))
-        print(type(iv))
+
         cipher = AES.new(self.key, AES.MODE_CBC, iv)
         return base64.b64encode(iv + cipher.encrypt(raw)).decode("utf-8")
 
@@ -215,31 +251,6 @@ class AESCipher:
         decrypted = cipher.decrypt(enc[16:])
         decrypted = decrypted[:-ord(decrypted[len(decrypted) - 1:])]  # unpad
         return decrypted.decode("utf-8")
-
-
-def export_passwords():
-    f = open("passwords.csv", "w")
-    f.write('name,url,username,password\n')
-    self.cursor = get_db()
-    aes = AESCipher(_key)
-    for (username, password, url) in self.cursor:
-        decrypted_password = aes.decrypt(password)
-        f.write(f"{url},{username},{decrypted_password}\n")
-    f.close()
-    print("Passwords exported to current directory.")
-
-
-def import_passwords(_file):
-    f = open(_file, 'r')
-    credentials = f.read()
-
-    for line in credentials.splitlines()[
-                1:]:  # we don't need the first line of a csv file it's always url , username , password
-        url, username, password = line.split(',')
-        _insert(username, password, url)
-    f.close()
-    print("Passwords successfully imported.")
-    print_db()
 
 
 def config(usr):
@@ -266,10 +277,10 @@ def user_interaction(password_manager):
     if not current_user:
         print("Error retrieving user information")
         return -1
-    print(f"\t\tYou're logged in as {current_user.username}")
+    print(f"You're logged in as {current_user.username}")
     password_manager.print_db()
     try:
-        choice = int(input("1.Insert\n2.Update\n3.Delete\n>>> "))
+        choice = int(input("1. Insert\n2. Update\n3. Delete\n4. Export\n5. Import\n>>> "))
     except:
         choice = -1
     return choice
@@ -280,7 +291,9 @@ if __name__ == "__main__":
     password_manager = PasswordManager()
     operations = {1: "insert",
                   2: "update",
-                  3: "delete"
+                  3: "delete",
+                  4: "export",
+                  5: "import"
                   }
     while True:
         # MAIN MENU
@@ -306,7 +319,7 @@ if __name__ == "__main__":
                 else:
                     continue
 
-# register User
-# use master key
-# 3dli el interface shwya
-# function logout
+
+# TODO logout
+
+#TODO add git ignore
