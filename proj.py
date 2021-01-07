@@ -1,12 +1,12 @@
 import base64
 import hashlib
-
 import mysql.connector
 from Crypto import Random
 from Crypto.Cipher import AES
 
 
-DB_NAME = "pm"
+DB_NAME = "password_manager"
+
 TABLES = {
     "User": "CREATE TABLE Users (id MEDIUMINT NOT NULL AUTO_INCREMENT, username VARCHAR(1000) NOT NULL UNIQUE, master_password VARCHAR(50) NOT NULL, PRIMARY KEY (id))", \
     "Data": "CREATE TABLE Passwords (id MEDIUMINT NOT NULL AUTO_INCREMENT, user_id MEDIUMINT, username VARCHAR(1000) NOT NULL, password VARCHAR(1000) NOT NULL, url VARCHAR(1000) NOT NULL ,PRIMARY KEY (id) )"
@@ -23,22 +23,26 @@ class User:
 
 class PasswordManager():
     def __init__(self):
-        # self.username = username
-        # self.master_key = master_key
+
+        
+        PASSWORD = input("Enter MYSQL root password: ")
+
         connection = mysql.connector.connect(
             host="localhost",
             user="root",
-            password="gbhgbhgbh"
-            # database="password_manager" #name of the database
+            password=PASSWORD
+
         )
+
         self.connection = connection
         self.cursor = connection.cursor()
         self.current_user = None
 
-
+        
         try:
             self.cursor.execute(f"USE {DB_NAME}")
-
+            
+            
         except mysql.connector.Error as err:
 
             try:
@@ -51,6 +55,7 @@ class PasswordManager():
                 self.create_tables()
             except  mysql.connector.Error as err:
                 print(f"couldn't create tables {err}")
+
 
     def create_database(self):
         sql = f"CREATE DATABASE {DB_NAME} DEFAULT CHARACTER SET 'utf8'"
@@ -73,7 +78,7 @@ class PasswordManager():
             self.cursor.execute(sql)
             self.connection.commit()
             self.cursor.execute(get_user_id)
-            user_id = self.cursor.fetchone()[0]  # returns row
+            user_id = self.cursor.fetchone()[0]  # returns a row
 
             cur_user = User(username, self.key , user_id)
             self.current_user = cur_user
@@ -121,7 +126,7 @@ class PasswordManager():
 
     def insert_row(self, username, pw, url):
         """Inserts the entry if it doesn't exist and edits the existing entry if it does. """
-        # TODO check for current  user only
+        
         if self.is_url_present(url):
             self.update_row("username", username, url)
             self.update_row("password", pw, url)
@@ -253,14 +258,6 @@ class AESCipher:
         return decrypted.decode("utf-8")
 
 
-def config(usr):
-    """make config file to determine if the user is already registered"""
-    try:
-        f = open("/home/password_manager.config", 'w+')
-        f.write(usr + "\n")  # append the name of every registered user to the file
-        f.close()
-    except FileNotFoundError:  # first use
-        f = open("/home/password_manager.config", 'w')
 
 
 def main_menu():
@@ -319,7 +316,3 @@ if __name__ == "__main__":
                 else:
                     continue
 
-
-# TODO logout
-
-#TODO add git ignore
