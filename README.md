@@ -1,10 +1,4 @@
-﻿Requirements:
-    root privileges
-    MySQL 
-
-
-Installation on Ubuntu 18.04
-
+Installation
 
 ```sudo apt install default-mysql-server``` install mysql
 
